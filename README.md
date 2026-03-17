@@ -32,3 +32,11 @@ src/main/java/com/example/tictactoe/
 
 ---
 
+📊 Статусы игры
+Статус	Описание
+IN_PROGRESS	Игра продолжается
+PLAYER_WON	Победил игрок (крестики)
+COMPUTER_WON	Победил компьютер (нолики)
+DRAW	Ничья
+
+
