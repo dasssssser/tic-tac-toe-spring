@@ -1,34 +1,44 @@
 package com.example.tictactoe.datasource.mapper;
 
-import com.example.tictactoe.datasource.model.Storage;
-import com.example.tictactoe.datasource.model.StatusGame;
+import com.example.tictactoe.datasource.entity.GameEntity;
+import com.example.tictactoe.datasource.entity.StatusGame;
 import com.example.tictactoe.domain.model.GameModel;
 import com.example.tictactoe.domain.model.GameField;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.mapstruct.Mapper;
 import org.mapstruct.Mapping;
 import org.mapstruct.Named;
-import org.springframework.beans.factory.annotation.Autowired;
 
 @Mapper(componentModel = "spring")
 public interface GameDataMapper {
 
-    @Mapping(source = "field", target = "board", qualifiedByName = "fieldToBoard")
-    @Mapping(target = "status", expression = "java(determineStatus(game.getField()))")
-    Storage toStorage(GameModel game);
+    ObjectMapper OBJECT_MAPPER = new ObjectMapper();
 
-    @Mapping(source = "board", target = "field", qualifiedByName = "boardToField")
-    GameModel toGameModel(Storage storage);
+    @Mapping(source = "field", target = "board", qualifiedByName = "fieldToJson")
+    @Mapping(target = "status", expression = "java(determineStatus(game.getField()).name())")
+    GameEntity toEntity(GameModel game);
 
-    @Named("fieldToBoard")
-    default int[][] mapFieldToBoard(GameField field) {
-        if (field == null) return new int[3][3];
-        return field.getField();
+    // GameEntity → GameModel
+    @Mapping(source = "board", target = "field", qualifiedByName = "jsonToField")
+    GameModel toModel(GameEntity gameEntity);
+
+    @Named("fieldToJson")
+    default String fieldToJson(GameField field) {
+        try {
+            return OBJECT_MAPPER.writeValueAsString(field.getField());
+        } catch (Exception e) {
+            return "[[0,0,0],[0,0,0],[0,0,0]]";
+        }
     }
 
-    @Named("boardToField")
-    default GameField mapBoardToField(int[][] board) {
-        if (board == null) return new GameField();
-        return new GameField(board);
+    @Named("jsonToField")
+    default GameField jsonToField(String board) {
+        try {
+            int[][] array = OBJECT_MAPPER.readValue(board, int[][].class);
+            return new GameField(array);
+        } catch (Exception e) {
+            return new GameField();
+        }
     }
 
     @Named("determineStatus")
@@ -38,8 +48,8 @@ public interface GameDataMapper {
         int[][] cells = field.getField();
         if (cells == null) return StatusGame.IN_PROGRESS;
 
-        if (checkWin(cells, 1)) return StatusGame.PLAYER_WON;
-        if (checkWin(cells, 2)) return StatusGame.COMPUTER_WON;
+        if (checkWin(cells, 1)) return StatusGame.WIN;
+        if (checkWin(cells, 2)) return StatusGame.WIN;
         if (isBoardFull(cells)) return StatusGame.DRAW;
         return StatusGame.IN_PROGRESS;
     }
