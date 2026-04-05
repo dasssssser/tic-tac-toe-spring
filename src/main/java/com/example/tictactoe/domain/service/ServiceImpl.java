@@ -1,5 +1,7 @@
 package com.example.tictactoe.domain.service;
 
+import com.example.tictactoe.datasource.entity.GameEntity;
+import com.example.tictactoe.datasource.entity.StatusGame;
 import com.example.tictactoe.datasource.repository.GameRepository;
 import com.example.tictactoe.datasource.mapper.GameDataMapper;
 import com.example.tictactoe.domain.model.GameField;
@@ -54,14 +56,17 @@ public class ServiceImpl implements Service {
         }
     }
 
+
     @Override
-    public boolean validation(GameField currentField, GameField updatedField) {
+    public boolean validation(String boardJson, GameField updatedField, int expectedSymbol) {
+        // Парсим текущее поле из JSON
+        GameField currentField = dataMapper.jsonToField(boardJson);
+
         int[][] current = currentField.getField();
         int[][] updated = updatedField.getField();
 
         int changes = 0;
-        int changedRow = -1;
-        int changedCol = -1;
+        int changedRow = -1, changedCol = -1;
 
         for (int i = 0; i < 3; i++) {
             for (int j = 0; j < 3; j++) {
@@ -75,7 +80,8 @@ public class ServiceImpl implements Service {
 
         if (changes != 1) return false;
         if (current[changedRow][changedCol] != 0) return false;
-        if (updated[changedRow][changedCol] != 1) return false;
+
+        if (updated[changedRow][changedCol] != expectedSymbol) return false;
 
         return true;
     }
@@ -108,46 +114,98 @@ public class ServiceImpl implements Service {
         return bestMove;
     }
 
+        @Override
+        public UUID createNewGame(String gameMode, UUID player1Id) {
+            UUID gameId = UUID.randomUUID();
+            GameField field = new GameField();
+            GameModel newGame = new GameModel(gameId, field);
+
+            StatusGame initialStatus = "PVP".equals(gameMode) ? StatusGame.WAITING : StatusGame.PLAYER_TURN;
+
+            newGame.setPlayer1Id(player1Id);
+            newGame.setPlayer2Id("PVE".equals(gameMode) ? null : null); // пока null, присоединится позже
+            newGame.setCurrentTurnId(player1Id); // первый ход у создателя
+            newGame.setGameMode(gameMode);
+
+            GameEntity entity = dataMapper.toEntity(newGame);
+            repository.save(entity);
+
+            return gameId;
+        }
+
     @Override
-    public GameModel processMove(GameModel playerGame) {
+    public GameModel processMove(GameModel playerGame, UUID playerUuid) {
         if (playerGame.getId() == null) {
             throw new IllegalArgumentException("Game ID cannot be null");
         }
 
+        GameEntity savedEntity = repository.findById(playerGame.getId())
+                .orElseThrow(() -> new IllegalArgumentException("Game not found"));
+
+        String status = savedEntity.getStatus();
+        if ("WIN".equals(status) || "DRAW".equals(status)) {
+            throw new IllegalArgumentException("Game is finished");
+        }
+
+        if (!savedEntity.getCurrentTurnId().equals(playerUuid)) {
+            throw new IllegalArgumentException("Not your turn");
+        }
+
+        int expectedSymbol = savedEntity.getPlayer1Id().equals(playerUuid) ? 1 : 2;
+
+        if (!validation(savedEntity.getBoard(), playerGame.getField(), expectedSymbol)) {
+            throw new IllegalArgumentException("Invalid move");
+        }
+
         GameField currentField = playerGame.getField();
 
-        var savedStorage = repository.findById(playerGame.getId())
-                .orElseThrow(() -> new IllegalArgumentException("game not found" + playerGame.getId()));
-
-        GameModel savedGame = dataMapper.toGameModel(savedStorage);
-        GameField savedField = savedGame.getField();
-
-        if (!validation(savedField, currentField)) {
-            throw new IllegalArgumentException("You need to put a 1 in the empty cell");
+        int winnerSymbol = getWinner(currentField);
+        if (winnerSymbol != 0) {
+            savedEntity.setStatus("WIN");
+            if (winnerSymbol == 1) {
+                savedEntity.setWinnerId(savedEntity.getPlayer1Id());
+            } else {
+                savedEntity.setWinnerId(savedEntity.getPlayer2Id());
+            }
         }
-
-        if (gameFinished(currentField)) {
-            return playerGame;
+        else if (draw(currentField)) {
+            savedEntity.setStatus("DRAW");
         }
+        else {
+            UUID nextTurn = savedEntity.getCurrentTurnId().equals(savedEntity.getPlayer1Id())
+                    ? savedEntity.getPlayer2Id()
+                    : savedEntity.getPlayer1Id();
+            savedEntity.setCurrentTurnId(nextTurn);
 
-        int[] bestMove = getBestMove(currentField);
-        if (bestMove[0] != -1 && bestMove[1] != -1) {
-            currentField.setValue(bestMove[0], bestMove[1], 2);
-        }
 
-        GameModel updatedGame = new GameModel(playerGame.getId(), currentField);
-        repository.save(dataMapper.toStorage(updatedGame));
+            if ("PVE".equals(savedEntity.getGameMode())) {
+                int[] bestMove = getBestMove(currentField);
+                if (bestMove[0] != -1) {
+                    currentField.setValue(bestMove[0], bestMove[1], 2);
+                }
 
-        return updatedGame;
-    }
+                int compWinner = getWinner(currentField);
+                if (compWinner != 0) {
+                    savedEntity.setStatus("WIN");
+                    savedEntity.setWinnerId(null); // компьютер не имеет UUID
+                } else if (draw(currentField)) {
+                    savedEntity.setStatus("DRAW");
+                }
 
-    @Override
-    public UUID createNewGame() {
-        UUID gameId = UUID.randomUUID();
-        GameField field = new GameField();
-        GameModel newGame = new GameModel(gameId, field);
-        repository.save(dataMapper.toStorage(newGame));
-        return gameId;
+            } else {
+
+                nextTurn = savedEntity.getCurrentTurnId().equals(savedEntity.getPlayer1Id())
+                        ? savedEntity.getPlayer2Id()
+                        : savedEntity.getPlayer1Id();
+                savedEntity.setCurrentTurnId(nextTurn);
+            }}
+
+        savedEntity.setBoard(dataMapper.toEntity(
+                new GameModel(savedEntity.getId(), currentField)
+        ).getBoard());
+
+        repository.save(savedEntity);
+        return dataMapper.toModel(savedEntity);
     }
 
     @Override
@@ -182,4 +240,34 @@ public class ServiceImpl implements Service {
         if (win(field, 2)) return 2;
         return 0;
     }
+    @Override
+    public GameModel joinGame(UUID gameId, UUID player2Id) {
+        // 1. Найти игру в БД
+        GameEntity entity = repository.findById(gameId)
+                .orElseThrow(() -> new IllegalArgumentException("Game not found"));
+
+        // 2. Проверки
+        if (entity.getPlayer2Id() != null) {
+            throw new IllegalArgumentException("Game is already full");
+        }
+        if (!"WAITING".equals(entity.getStatus())) {
+            throw new IllegalArgumentException("Game is not waiting for players");
+        }
+        if (entity.getPlayer1Id().equals(player2Id)) {
+            throw new IllegalArgumentException("Cannot join your own game");
+        }
+
+
+        // 3. Обновить Entity
+        entity.setPlayer2Id(player2Id);
+        entity.setStatus("PLAYER_TURN"); // игра началась
+        // currentTurnId уже = player1Id
+
+        // 4. Сохранить
+        repository.save(entity);
+
+        // 5. Вернуть модель (для контроллера)
+        return dataMapper.toModel(entity);
+    }
+
 }
