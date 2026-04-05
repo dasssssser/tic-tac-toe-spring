@@ -45,4 +45,19 @@ public class GameField {
     public int[][] getField() {
         return copy();
     }
+
+
+    public void setField(int[][] drawBoard) {
+        if (drawBoard == null) {
+            this.field = new int[3][3];
+            return;
+        }
+        int[][] newField = new int[3][3];
+        for (int i = 0; i < 3 && i < drawBoard.length; i++) {
+            for (int j = 0; j < 3 && j < drawBoard[i].length; j++) {
+                newField[i][j] = drawBoard[i][j];
+            }
+        }
+        this.field = newField;
+    }
 }
