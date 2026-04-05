@@ -8,7 +8,7 @@ import org.mapstruct.Named;
 import com.example.tictactoe.web.model.GameWebDto;
 
 @Mapper(componentModel = "spring")
-public interface GameWebMapper {
+public interface  GameWebMapper {
 
     @Mapping(source = "field", target = "board", qualifiedByName = "fieldToBoard")
     GameWebDto toDto(GameModel game);

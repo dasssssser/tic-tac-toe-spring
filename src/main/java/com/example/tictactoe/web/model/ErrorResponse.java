@@ -12,6 +12,7 @@ public class ErrorResponse {
         this.status = status;
     }
 
+
     public String getMessage() {
         return message;
     }
